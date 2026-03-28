@@ -1,6 +1,5 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { ReportData } from '@/types';
 import { format } from 'date-fns';
 
 const HOSPITAL_NAME = 'SINDH INSTITUTE OF PHYSICAL MEDICINE & REHABILITATION';
@@ -24,8 +23,57 @@ function loadImageAsBase64(src: string): Promise<string> {
   });
 }
 
+// ── Collapse present entries per doctor into one row ─────────────────────────
+function buildPDFRows(data: any[]) {
+  // Map: doctorId → aggregated present record
+  const presentMap: Record<string, {
+    doctorName:  string;
+    deptNames:   string[];
+    dates:       string[];
+    male:        number;
+    female:      number;
+    pediatric:   number;
+  }> = {};
+
+  const offRows: any[] = [];
+
+  for (const r of data) {
+    const status = r.status || 'present';
+    if (status === 'absent' || status === 'leave') {
+      offRows.push(r);
+    } else {
+      const key      = r.doctor_id || r.doctor?.id || r.id;
+      const male     = r.male_count      ?? r.male      ?? 0;
+      const female   = r.female_count    ?? r.female    ?? 0;
+      const pead     = r.pediatric_count ?? r.pediatric ?? 0;
+      const deptName = r.department?.name ?? r.department ?? '';
+      const dateStr  = r.entry_date ?? r.date ?? '';
+
+      if (!presentMap[key]) {
+        presentMap[key] = {
+          doctorName: r.doctor?.name ?? r.doctor ?? '—',
+          deptNames:  [],
+          dates:      [],
+          male:       0,
+          female:     0,
+          pediatric:  0,
+        };
+      }
+      presentMap[key].male      += male;
+      presentMap[key].female    += female;
+      presentMap[key].pediatric += pead;
+      if (deptName && !presentMap[key].deptNames.includes(deptName))
+        presentMap[key].deptNames.push(deptName);
+      if (dateStr && !presentMap[key].dates.includes(dateStr))
+        presentMap[key].dates.push(dateStr);
+    }
+  }
+
+  return { presentCollapsed: Object.values(presentMap), offRows };
+}
+
 export async function generateReportPDF(
-  data: any[],           // accepts raw DB rows directly — no pre-mapping needed
+  data: any[],
   title: string,
   subtitle: string,
   doctorName?: string
@@ -38,16 +86,14 @@ export async function generateReportPDF(
   doc.rect(0, 0, 210, HEADER_H, 'F');
 
   const LOGO_W = 50, LOGO_H = 50, LOGO_X = 10;
-  const LOGO_Y = (HEADER_H - LOGO_H) / 2;
-  const TEXT_X = LOGO_X + LOGO_W + 5;
-  const TEXT_W = 210 - TEXT_X - 6;
+  const LOGO_Y  = (HEADER_H - LOGO_H) / 2;
+  const TEXT_X  = LOGO_X + LOGO_W + 5;
+  const TEXT_W  = 210 - TEXT_X - 6;
 
-  if (HOSPITAL_LOGO) {
-    try {
-      const base64 = await loadImageAsBase64(HOSPITAL_LOGO);
-      doc.addImage(base64, 'PNG', LOGO_X, LOGO_Y, LOGO_W, LOGO_H);
-    } catch { /* continue without logo */ }
-  }
+  try {
+    const base64 = await loadImageAsBase64(HOSPITAL_LOGO);
+    doc.addImage(base64, 'PNG', LOGO_X, LOGO_Y, LOGO_W, LOGO_H);
+  } catch { /* continue without logo */ }
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
@@ -57,7 +103,6 @@ export async function generateReportPDF(
   const blockH     = nameLines.length * lineH;
   const nameStartY = LOGO_Y + (LOGO_H - blockH - 6) / 2 + lineH;
   nameLines.forEach((line, i) => doc.text(line, TEXT_X, nameStartY + i * lineH));
-
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(167, 243, 208);
@@ -73,7 +118,7 @@ export async function generateReportPDF(
   metaY += 7;
   doc.text(`Period    : ${subtitle}`, 14, metaY);
 
-  // ── SUMMARY BOX (only present rows count) ────────────────────────────
+  // ── SUMMARY BOX ──────────────────────────────────────────────────────
   const presentRows    = data.filter(r => !r.status || r.status === 'present');
   const totalMale      = presentRows.reduce((s, r) => s + (r.male_count      ?? r.male      ?? 0), 0);
   const totalFemale    = presentRows.reduce((s, r) => s + (r.female_count    ?? r.female    ?? 0), 0);
@@ -91,60 +136,83 @@ export async function generateReportPDF(
   doc.text(`Pediatric: ${totalPediatric}`, 116,  summaryY + 9);
   doc.text(`Grand Total: ${grandTotal}`,   162,  summaryY + 9);
 
-  // ── TABLE ─────────────────────────────────────────────────────────────
-  const tableStartY   = summaryY + 20;
-  const hasDoctor     = data.some(r => r.doctor?.name || r.doctor);
-  const hasDepartment = data.some(r => r.department?.name || r.department);
+  // ── BUILD ROWS ────────────────────────────────────────────────────────
+  const { presentCollapsed, offRows } = buildPDFRows(data);
 
-  const columns: string[] = ['Date'];
-  if (hasDoctor)     columns.push('Doctor');
-  if (hasDepartment) columns.push('Department');
-  columns.push('Status', 'Male', 'Female', 'Pediatric', 'Total', 'Remarks');
+  const hasDoctor = data.some(r => r.doctor?.name || r.doctor);
 
-  const rows = data.map(r => {
-    // normalise — accept both raw DB shape and pre-mapped shape
-    const status     = r.status || 'present';
-    const isOff      = status === 'absent' || status === 'leave';
-    const male       = r.male_count      ?? r.male      ?? 0;
-    const female     = r.female_count    ?? r.female    ?? 0;
-    const pediatric  = r.pediatric_count ?? r.pediatric ?? 0;
-    const total      = male + female + pediatric;
-    // ── doctor / department name ──────────────────────────────────────
-    const doctorCol  = r.doctor?.name  ?? r.doctor  ?? '-';
-    const deptCol    = r.department?.name ?? r.department ?? '-';
-    // ── remarks: use whatever field is present ─────────────────────────
-    const remarks    = r.remarks ?? r.remark ?? '';
+  // Columns: Doctor (optional) | Department | Days Present / Date | Status | M | F | P | Total | Remarks
+  const columns: string[] = [];
+  if (hasDoctor) columns.push('Doctor');
+  columns.push('Department', 'Date / Days Present', 'Status', 'Male', 'Female', 'Pediatric', 'Total', 'Remarks');
 
-    const row: (string | number)[] = [
-      (() => { try { return format(new Date(r.entry_date ?? r.date), 'dd MMM yyyy'); } catch { return r.entry_date ?? r.date ?? ''; } })(),
-    ];
-    if (hasDoctor)     row.push(doctorCol);
-    if (hasDepartment) row.push(deptCol);
+  const tableRows: (string | number)[][] = [];
 
+  // Present rows — one per doctor, collapsed
+  for (const p of presentCollapsed) {
+    const total = p.male + p.female + p.pediatric;
+    // Sort dates and format as range or list
+    const sortedDates = [...p.dates].sort();
+    let dateLabel = '';
+    if (sortedDates.length === 0) {
+      dateLabel = '—';
+    } else if (sortedDates.length === 1) {
+      try { dateLabel = format(new Date(sortedDates[0]), 'dd MMM yyyy'); } catch { dateLabel = sortedDates[0]; }
+    } else {
+      try {
+        const first = format(new Date(sortedDates[0]),                       'dd MMM yyyy');
+        const last  = format(new Date(sortedDates[sortedDates.length - 1]), 'dd MMM yyyy');
+        dateLabel   = `${first} – ${last}\n(${sortedDates.length} days)`;
+      } catch { dateLabel = `${sortedDates.length} days`; }
+    }
+
+    const row: (string | number)[] = [];
+    if (hasDoctor) row.push(`Dr. ${p.doctorName}`);
     row.push(
-      status === 'absent' ? 'Absent' : status === 'leave' ? 'On Leave' : 'Present',
-      isOff ? '-' : male,
-      isOff ? '-' : female,
-      isOff ? '-' : pediatric,
-      isOff ? 'N/A' : total,
-      remarks,          // ← always included now, never dropped
+      p.deptNames.join(', ') || '—',
+      dateLabel,
+      'Present',
+      p.male,
+      p.female,
+      p.pediatric,
+      total,
+      '',
     );
-    return row;
-  });
+    tableRows.push(row);
+  }
 
-  const statusColIdx = 1 + (hasDoctor ? 1 : 0) + (hasDepartment ? 1 : 0);
+  // Absent / Leave rows — individual with exact date + remarks
+  for (const r of offRows) {
+    const status    = r.status;
+    const statusStr = status === 'absent' ? 'Absent' : 'On Leave';
+    const dateStr   = (() => {
+      try { return format(new Date(r.entry_date ?? r.date), 'dd MMM yyyy'); }
+      catch { return r.entry_date ?? r.date ?? '—'; }
+    })();
+    const remarks   = r.remarks ?? r.remark ?? '';
+    const deptName  = r.department?.name ?? r.department ?? '—';
+    const docName   = r.doctor?.name     ?? r.doctor     ?? '—';
+
+    const row: (string | number)[] = [];
+    if (hasDoctor) row.push(`Dr. ${docName}`);
+    row.push(deptName, dateStr, statusStr, '-', '-', '-', 'N/A', remarks);
+    tableRows.push(row);
+  }
+
+  // Status column index (for colour coding)
+  const statusColIdx = (hasDoctor ? 1 : 0) + 2; // after Doctor(opt), Department, Date
 
   autoTable(doc, {
-    startY: tableStartY,
-    head: [columns],
-    body: rows,
-    theme: 'striped',
-    headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    startY: summaryY + 20,
+    head:   [columns],
+    body:   tableRows,
+    theme:  'striped',
+    headStyles:         { fillColor: [5, 150, 105], textColor: 255, fontStyle: 'bold', fontSize: 8 },
     bodyStyles:         { fontSize: 8, textColor: [30, 30, 30] },
     alternateRowStyles: { fillColor: [240, 253, 244] },
     styles:             { cellPadding: 2.5, overflow: 'linebreak' },
     columnStyles: {
-      [columns.length - 1]: { cellWidth: 32 }, // Remarks column
+      [columns.length - 1]: { cellWidth: 32 }, // Remarks
     },
     didParseCell(hookData) {
       if (hookData.section !== 'body') return;
@@ -153,19 +221,21 @@ export async function generateReportPDF(
       const val = String(statusCell.raw || '');
       if (val === 'Absent') {
         hookData.cell.styles.fillColor = [254, 226, 226];
-        hookData.cell.styles.textColor = [185, 28, 28];
+        hookData.cell.styles.textColor = [185, 28,  28];
         hookData.cell.styles.fontStyle = 'bold';
       } else if (val === 'On Leave') {
         hookData.cell.styles.fillColor = [255, 237, 213];
-        hookData.cell.styles.textColor = [194, 65, 12];
+        hookData.cell.styles.textColor = [194, 65,  12];
+        hookData.cell.styles.fontStyle = 'bold';
+      } else if (val === 'Present') {
+        hookData.cell.styles.fillColor = [209, 250, 229];
+        hookData.cell.styles.textColor = [6,   95,  70];
         hookData.cell.styles.fontStyle = 'bold';
       }
     },
     foot: [[
-      'TOTAL',
-      ...(hasDoctor     ? [''] : []),
-      ...(hasDepartment ? [''] : []),
-      '',
+      ...(hasDoctor ? [''] : []),
+      '', 'TOTAL', '',
       String(totalMale),
       String(totalFemale),
       String(totalPediatric),
