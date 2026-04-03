@@ -27,13 +27,15 @@ function loadImageAsBase64(src: string): Promise<string> {
 function buildPDFRows(data: any[]) {
   // Map: doctorId → aggregated present record
   const presentMap: Record<string, {
-    doctorName:  string;
-    deptNames:   string[];
-    dates:       string[];
-    male:        number;
-    female:      number;
-    pediatric:   number;
-  }> = {};
+  doctorName:    string;
+  deptNames:     string[];
+  dates:         string[];
+  remarks:       string[];
+  reportsTotal:  number;   // ← ADD
+  male:          number;
+  female:        number;
+  pediatric:     number;
+}> = {};
 
   const offRows: any[] = [];
 
@@ -49,19 +51,22 @@ function buildPDFRows(data: any[]) {
       const deptName = r.department?.name ?? r.department ?? '';
       const dateStr  = r.entry_date ?? r.date ?? '';
 
-      if (!presentMap[key]) {
-        presentMap[key] = {
-          doctorName: r.doctor?.name ?? r.doctor ?? '—',
-          deptNames:  [],
-          dates:      [],
-          male:       0,
-          female:     0,
-          pediatric:  0,
-        };
-      }
+    if (!presentMap[key]) {
+  presentMap[key] = {
+    doctorName:   r.doctor?.name ?? r.doctor ?? '—',
+    deptNames:    [],
+    dates:        [],
+    remarks:      [],
+    reportsTotal: 0,   // ← ADD
+    male:         0,
+    female:       0,
+    pediatric:    0,
+  };
+}
       presentMap[key].male      += male;
       presentMap[key].female    += female;
       presentMap[key].pediatric += pead;
+      presentMap[key].reportsTotal += (r.reports_count || 0);
       if (deptName && !presentMap[key].deptNames.includes(deptName))
         presentMap[key].deptNames.push(deptName);
       if (dateStr && !presentMap[key].dates.includes(dateStr))
@@ -168,16 +173,20 @@ export async function generateReportPDF(
 
     const row: (string | number)[] = [];
     if (hasDoctor) row.push(`Dr. ${p.doctorName}`);
-    row.push(
-      p.deptNames.join(', ') || '—',
-      dateLabel,
-      'Present',
-      p.male,
-      p.female,
-      p.pediatric,
-      total,
-      '',
-    );
+ const remarksParts: string[] = [];
+if (p.reportsTotal > 0) remarksParts.push(`Reports: ${p.reportsTotal}`);
+if (p.remarks.length > 0) remarksParts.push(...p.remarks);
+
+row.push(
+  p.deptNames.join(', ') || '—',
+  dateLabel,
+  'Present',
+  p.male,
+  p.female,
+  p.pediatric,
+  total,
+  remarksParts.join(' | ') || '',   // ← shows "Reports: 5 | some remark"
+);
     tableRows.push(row);
   }
 
