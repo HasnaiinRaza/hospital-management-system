@@ -6,18 +6,19 @@ import Sidebar from '@/components/Sidebar';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Department, User } from '@/types';
 import toast from 'react-hot-toast';
-import { Plus, Pencil, Trash2, X, Check, ClipboardList } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Check, ClipboardList, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface EntryForm {
-  doctor_id:      string;
-  department_id:  string;
-  entry_date:     string;
-  male_count:     number;
-  female_count:   number;
+  doctor_id:       string;
+  department_id:   string;
+  entry_date:      string;
+  male_count:      number;
+  female_count:    number;
   pediatric_count: number;
-  status:         string;
-  remarks:        string;
+  status:          string;
+  remarks:         string;
+  reports_count:   number;
 }
 
 const EMPTY_FORM: EntryForm = {
@@ -29,23 +30,24 @@ const EMPTY_FORM: EntryForm = {
   pediatric_count: 0,
   status:          'present',
   remarks:         '',
+  reports_count:   0,
 };
+
+const NEURO_PSYCHOLOGY_NAME = 'Neuro-Psychology';
 
 export default function AdminEntriesPage() {
   const { user, loading } = useAuth('admin');
-  const [entries,     setEntries]     = useState<any[]>([]);
-  const [doctors,     setDoctors]     = useState<User[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [showForm,    setShowForm]    = useState(false);
-  const [editId,      setEditId]      = useState<string | null>(null);
-  const [form,        setForm]        = useState<EntryForm>(EMPTY_FORM);
-  const [submitting,  setSubmitting]  = useState(false);
+  const [entries,      setEntries]      = useState<any[]>([]);
+  const [doctors,      setDoctors]      = useState<User[]>([]);
+  const [departments,  setDepartments]  = useState<Department[]>([]);
+  const [showForm,     setShowForm]     = useState(false);
+  const [editId,       setEditId]       = useState<string | null>(null);
+  const [form,         setForm]         = useState<EntryForm>(EMPTY_FORM);
+  const [submitting,   setSubmitting]   = useState(false);
   const [filterDate,   setFilterDate]   = useState('');
   const [filterDoctor, setFilterDoctor] = useState('');
 
-  useEffect(() => {
-    if (user) fetchAll();
-  }, [user]);
+  useEffect(() => { if (user) fetchAll(); }, [user]);
 
   const fetchAll = async () => {
     const [entriesRes, doctorsRes, deptsRes] = await Promise.all([
@@ -53,9 +55,11 @@ export default function AdminEntriesPage() {
       fetch('/api/doctors'),
       fetch('/api/departments'),
     ]);
-    const [ed, doc, dept] = await Promise.all([entriesRes.json(), doctorsRes.json(), deptsRes.json()]);
-    setEntries(ed.entries   || []);
-    setDoctors(doc.doctors  || []);
+    const [ed, doc, dept] = await Promise.all([
+      entriesRes.json(), doctorsRes.json(), deptsRes.json(),
+    ]);
+    setEntries(ed.entries        || []);
+    setDoctors(doc.doctors       || []);
     setDepartments(dept.departments || []);
   };
 
@@ -70,18 +74,24 @@ export default function AdminEntriesPage() {
       male_count:      entry.male_count,
       female_count:    entry.female_count,
       pediatric_count: entry.pediatric_count,
-      status:          entry.status || 'present',
-      remarks:         entry.remarks || '',
+      status:          entry.status        || 'present',
+      remarks:         entry.remarks       || '',
+      reports_count:   entry.reports_count || 0,
     });
     setShowForm(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.doctor_id || !form.department_id) { toast.error('Please select doctor and department'); return; }
+    if (!form.doctor_id || !form.department_id) {
+      toast.error('Please select doctor and department');
+      return;
+    }
     setSubmitting(true);
     try {
-      const body = editId ? { id: editId, ...form } : { ...form, created_by: user?.id };
+      const body = editId
+        ? { id: editId, ...form }
+        : { ...form, created_by: user?.id };
       const res  = await fetch('/api/entries', {
         method:  editId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -115,6 +125,11 @@ export default function AdminEntriesPage() {
 
   const isOff = form.status === 'absent' || form.status === 'leave';
 
+  // Check if the selected doctor belongs to Neuro-Psychology
+  const selectedDoctorData  = (doctors as any[]).find(d => d.id === form.doctor_id);
+  const selectedDeptData    = departments.find(d => d.id === form.department_id);
+  const isNeuroPsych        = selectedDeptData?.name === NEURO_PSYCHOLOGY_NAME;
+
   if (loading || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center medical-bg">
@@ -137,7 +152,9 @@ export default function AdminEntriesPage() {
               <p className="text-sm text-emerald-600/70">{entries.length} total entries</p>
             </div>
             <button onClick={openAdd} className="btn-primary flex items-center gap-2 text-sm">
-              <Plus size={16} /> <span className="hidden sm:inline">Add Entry</span><span className="sm:hidden">Add</span>
+              <Plus size={16} />
+              <span className="hidden sm:inline">Add Entry</span>
+              <span className="sm:hidden">Add</span>
             </button>
           </div>
 
@@ -155,7 +172,7 @@ export default function AdminEntriesPage() {
               onChange={e => setFilterDoctor(e.target.value)}
             >
               <option value="">All Doctors</option>
-              {doctors.map(d => <option key={d.id} value={d.id}>Dr. {d.name}</option>)}
+              {doctors.map(d => <option key={d.id} value={d.id}>Dr. {(d as any).name}</option>)}
             </select>
             {(filterDate || filterDoctor) && (
               <button
@@ -174,7 +191,7 @@ export default function AdminEntriesPage() {
               <span className="font-semibold text-emerald-900 text-sm">{filtered.length} entries</span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[650px]">
+              <table className="w-full min-w-[700px]">
                 <thead>
                   <tr className="bg-emerald-50 border-b border-emerald-100">
                     <th className="text-left px-4 py-3 text-xs font-bold text-emerald-700 uppercase tracking-wide">Date</th>
@@ -185,30 +202,35 @@ export default function AdminEntriesPage() {
                     <th className="text-center px-4 py-3 text-xs font-bold text-pink-600 uppercase tracking-wide">F</th>
                     <th className="text-center px-4 py-3 text-xs font-bold text-amber-600 uppercase tracking-wide">P</th>
                     <th className="text-center px-4 py-3 text-xs font-bold text-emerald-700 uppercase tracking-wide">Total</th>
+                    <th className="text-center px-4 py-3 text-xs font-bold text-purple-600 uppercase tracking-wide">Reports</th>
                     <th className="text-right px-4 py-3 text-xs font-bold text-emerald-700 uppercase tracking-wide">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="text-center py-12 text-gray-400 text-sm">
+                      <td colSpan={10} className="text-center py-12 text-gray-400 text-sm">
                         <ClipboardList size={32} className="mx-auto mb-2 opacity-30" />
                         No entries found
                       </td>
                     </tr>
                   ) : filtered.map((entry: any) => {
-                    const status   = entry.status || 'present';
-                    const entryOff = status === 'absent' || status === 'leave';
-                    const total    = entry.male_count + entry.female_count + entry.pediatric_count;
-                    const rowBg    = status === 'absent' ? 'bg-red-50' : status === 'leave' ? 'bg-orange-50' : '';
+                    const status      = entry.status || 'present';
+                    const entryOff    = status === 'absent' || status === 'leave';
+                    const total       = entry.male_count + entry.female_count + entry.pediatric_count;
+                    const rowBg       = status === 'absent' ? 'bg-red-50' : status === 'leave' ? 'bg-orange-50' : '';
                     const statusBadge = status === 'absent'
                       ? 'bg-red-100 text-red-700'
                       : status === 'leave'
                       ? 'bg-orange-100 text-orange-700'
                       : 'bg-emerald-100 text-emerald-700';
+                    const deptName    = entry.department?.name || '';
+                    const showReports = deptName === NEURO_PSYCHOLOGY_NAME;
                     return (
                       <tr key={entry.id} className={`border-b border-gray-50 hover:bg-emerald-50/30 transition-colors ${rowBg}`}>
-                        <td className="px-4 py-3 text-sm font-medium text-gray-700 whitespace-nowrap">{format(new Date(entry.entry_date), 'dd MMM yyyy')}</td>
+                        <td className="px-4 py-3 text-sm font-medium text-gray-700 whitespace-nowrap">
+                          {format(new Date(entry.entry_date), 'dd MMM yyyy')}
+                        </td>
                         <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">Dr. {entry.doctor?.name}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{entry.department?.name}</td>
                         <td className="px-4 py-3">
@@ -228,10 +250,23 @@ export default function AdminEntriesPage() {
                         <td className="px-4 py-3 text-center font-bold text-emerald-700 text-sm">
                           {entryOff ? <span className="text-xs text-gray-400">N/A</span> : total}
                         </td>
+                        <td className="px-4 py-3 text-center">
+                          {showReports && !entryOff ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700">
+                              <FileText size={10} /> {entry.reports_count || 0}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
-                            <button onClick={() => openEdit(entry)} className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-100 transition-colors"><Pencil size={15} /></button>
-                            <button onClick={() => handleDelete(entry.id)} className="p-2 rounded-lg text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={15} /></button>
+                            <button onClick={() => openEdit(entry)} className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-100 transition-colors">
+                              <Pencil size={15} />
+                            </button>
+                            <button onClick={() => handleDelete(entry.id)} className="p-2 rounded-lg text-red-500 hover:bg-red-50 transition-colors">
+                              <Trash2 size={15} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -254,27 +289,51 @@ export default function AdminEntriesPage() {
               <button onClick={() => setShowForm(false)} className="p-2 rounded-lg hover:bg-gray-100"><X size={18} /></button>
             </div>
             <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto max-h-[80vh]">
+
               <div>
                 <label className="block text-xs font-semibold text-emerald-800 mb-1.5">Doctor *</label>
-                <select className="input-field" value={form.doctor_id} onChange={e => setForm({ ...form, doctor_id: e.target.value })} required>
+                <select
+                  className="input-field"
+                  value={form.doctor_id}
+                  onChange={e => setForm({ ...form, doctor_id: e.target.value, reports_count: 0 })}
+                  required
+                >
                   <option value="">Select doctor</option>
-                  {doctors.map(d => <option key={d.id} value={d.id}>Dr. {d.name}</option>)}
+                  {doctors.map(d => <option key={d.id} value={d.id}>Dr. {(d as any).name}</option>)}
                 </select>
               </div>
+
               <div>
                 <label className="block text-xs font-semibold text-emerald-800 mb-1.5">Department *</label>
-                <select className="input-field" value={form.department_id} onChange={e => setForm({ ...form, department_id: e.target.value })} required>
+                <select
+                  className="input-field"
+                  value={form.department_id}
+                  onChange={e => setForm({ ...form, department_id: e.target.value, reports_count: 0 })}
+                  required
+                >
                   <option value="">Select department</option>
                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </div>
+
               <div>
                 <label className="block text-xs font-semibold text-emerald-800 mb-1.5">Date *</label>
-                <input type="date" className="input-field" value={form.entry_date} onChange={e => setForm({ ...form, entry_date: e.target.value })} required />
+                <input
+                  type="date"
+                  className="input-field"
+                  value={form.entry_date}
+                  onChange={e => setForm({ ...form, entry_date: e.target.value })}
+                  required
+                />
               </div>
+
               <div>
                 <label className="block text-xs font-semibold text-emerald-800 mb-1.5">Status</label>
-                <select className="input-field" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                <select
+                  className="input-field"
+                  value={form.status}
+                  onChange={e => setForm({ ...form, status: e.target.value })}
+                >
                   <option value="present">✅ Present</option>
                   <option value="absent">❌ Absent</option>
                   <option value="leave">🗓️ On Leave</option>
@@ -285,16 +344,16 @@ export default function AdminEntriesPage() {
               {!isOff && (
                 <div className="grid grid-cols-3 gap-3">
                   {[
-                    { key: 'male_count',       label: 'Male',      color: 'text-blue-600',  badge: 'border-blue-200 bg-blue-50' },
-                    { key: 'female_count',     label: 'Female',    color: 'text-pink-600',  badge: 'border-pink-200 bg-pink-50' },
-                    { key: 'pediatric_count',  label: 'Pediatric', color: 'text-amber-600', badge: 'border-amber-200 bg-amber-50' },
+                    { key: 'male_count',      label: 'Male',      color: 'text-blue-600',  badge: 'border-blue-200 bg-blue-50'   },
+                    { key: 'female_count',    label: 'Female',    color: 'text-pink-600',  badge: 'border-pink-200 bg-pink-50'   },
+                    { key: 'pediatric_count', label: 'Pediatric', color: 'text-amber-600', badge: 'border-amber-200 bg-amber-50' },
                   ].map(({ key, label, color, badge }) => (
                     <div key={key}>
                       <label className={`block text-xs font-bold mb-1.5 ${color}`}>{label}</label>
                       <input
                         type="number" min="0"
                         className={`w-full px-3 py-2.5 rounded-xl border text-center font-bold text-lg ${badge} ${color} focus:outline-none focus:ring-2 focus:ring-emerald-300`}
-                        value={form[key as keyof EntryForm]}
+                        value={form[key as keyof EntryForm] as number}
                         onChange={e => setForm({ ...form, [key]: parseInt(e.target.value) || 0 })}
                       />
                     </div>
@@ -312,6 +371,23 @@ export default function AdminEntriesPage() {
                 </div>
               )}
 
+              {/* Reports count — only for Neuro-Psychology and when present */}
+              {!isOff && isNeuroPsych && (
+                <div className="bg-purple-50 rounded-2xl border border-purple-200 p-4">
+                  <label className="block text-xs font-bold text-purple-700 mb-2 flex items-center gap-1.5">
+                    <FileText size={13} /> Reports Done (Neuro-Psychology)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full px-3 py-2.5 rounded-xl border border-purple-200 bg-white text-center font-bold text-lg text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-300"
+                    value={form.reports_count}
+                    onChange={e => setForm({ ...form, reports_count: parseInt(e.target.value) || 0 })}
+                  />
+                  <p className="text-xs text-purple-500 mt-1.5">Number of psychological reports completed this day</p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-emerald-800 mb-1.5">Remarks</label>
                 <textarea
@@ -324,8 +400,18 @@ export default function AdminEntriesPage() {
               </div>
 
               <div className="flex gap-3 pt-1 pb-2">
-                <button type="button" onClick={() => setShowForm(false)} className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={submitting} className="btn-primary flex-1 flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
+                >
                   {submitting
                     ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     : <><Check size={16} /> {editId ? 'Update' : 'Add Entry'}</>
