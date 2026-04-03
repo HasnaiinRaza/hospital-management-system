@@ -203,7 +203,7 @@ row.push(
     const docName   = r.doctor?.name     ?? r.doctor     ?? '—';
 
     const row: (string | number)[] = [];
-    if (hasDoctor) row.push(`Dr. ${docName}`);
+    if (hasDoctor) row.push('${docName}');
     row.push(deptName, dateStr, statusStr, '-', '-', '-', 'N/A', remarks);
     tableRows.push(row);
   }
