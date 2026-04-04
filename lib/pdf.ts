@@ -148,7 +148,7 @@ export async function generateReportPDF(
 
   // Columns: Doctor (optional) | Department | Days Present / Date | Status | M | F | P | Total | Remarks
   const columns: string[] = [];
-  if (hasDoctor) columns.push('Doctor');
+  if (hasDoctor) columns.push('Therapist');
   columns.push('Department', 'Date / Days Present', 'Status', 'Male', 'Female', 'Pediatric', 'Total', 'Remarks');
 
   const tableRows: (string | number)[][] = [];
@@ -172,7 +172,7 @@ export async function generateReportPDF(
     }
 
     const row: (string | number)[] = [];
-    if (hasDoctor) row.push(`Dr. ${p.doctorName}`);
+    if (hasDoctor) row.push(p.doctorName);
  const remarksParts: string[] = [];
 if (p.reportsTotal > 0) remarksParts.push(`Reports: ${p.reportsTotal}`);
 if (p.remarks.length > 0) remarksParts.push(...p.remarks);
@@ -203,7 +203,7 @@ row.push(
     const docName   = r.doctor?.name     ?? r.doctor     ?? '—';
 
     const row: (string | number)[] = [];
-    if (hasDoctor) row.push('${docName}');
+    if (hasDoctor) row.push(docName);
     row.push(deptName, dateStr, statusStr, '-', '-', '-', 'N/A', remarks);
     tableRows.push(row);
   }
